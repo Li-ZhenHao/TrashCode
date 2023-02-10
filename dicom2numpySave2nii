@@ -1,0 +1,81 @@
+import SimpleITK as sitk
+import pandas as pd
+import os
+
+
+def get_instance_number(dicom_name):
+    reader = sitk.ImageFileReader()
+    reader.SetFileName(dicom_name)
+    # By default, private tags are not loaded.
+    # So you need to include the private tags.
+    reader.LoadPrivateTagsOn()  # to load the private meta information
+    reader.ReadImageInformation()
+    number_str = reader.GetMetaData('0020|0013')
+    # acquire the instance number of image，you can find any number in a dicom file by MicroDicom software.
+    return int(number_str)
+
+# the pet sequence are wrong order, so i use instance number to reorder the sequence!
+def get_order_name(file_path):
+    series_IDs = sitk.ImageSeriesReader.GetGDCMSeriesIDs(file_path)
+    series_files_name = sitk.ImageSeriesReader_GetGDCMSeriesFileNames(file_path, series_IDs[0])
+    new_series_name = []
+    for name in series_files_name:
+        new_series_name.append({"instance_number": get_instance_number(name),  "dicom_name": name})
+    new_series_name = pd.DataFrame(new_series_name)
+    new_series_name = new_series_name.sort_values("instance_number")
+    new_series_name = tuple(new_series_name["dicom_name"])
+    print(new_series_name)
+    return new_series_name
+
+
+def dcm2nii(dicom_path, nii_path):
+    # Create a dicom series reader
+    reader = sitk.ImageSeriesReader()
+    dicom_names = get_order_name(dicom_path)
+    reader.SetFileNames(dicom_names)
+
+    # Turn the dicom to array and acquire all data from the dicom files.
+    image = reader.Execute()
+    image_array = sitk.GetArrayFromImage(image)     # z, y, x
+    print(image_array)
+    origin = image.GetOrigin()      # x, y, z
+    print(origin)
+    spacing = image.GetSpacing()    # x, y, z
+    print(spacing)
+    direction = image.GetDirection()    # x, y, z
+    print(direction)
+
+    # Turn the array to img and save as the .nii.gz
+    image2 = sitk.GetImageFromArray(image_array)
+    image2.SetSpacing(spacing)
+    image2.SetOrigin(origin)
+    image2.SetDirection(direction)
+    sitk.WriteImage(image2, nii_path)
+
+# you can just use get_order_name() & dcm2nii() function to turn dicom sequence to numpy and save as nii file!
+# the code below are use for the dataset with lots of subdirectory, and their name are so complex that easily confuse users.
+# i use paired pet and ct data, so i turn to rename those files by x-pet or x-ct, therefore, i can realize its meaning quickly.
+
+save_root = ".dataset/nii"
+path_root = ".dataset/pet"
+filelist = os.listdir(path_root)
+for name in filelist:
+    firstlist = os.listdir(path_root + '/' + name)
+    for fname in firstlist:
+        secondlist = os.listdir(path_root + '/' + name + '/' + fname)
+        print(secondlist)
+        j = 0
+        for i in range(len(secondlist)):
+            file_path = path_root + '/' + name + '/' + fname + '/' + secondlist[i]
+            if i % 2 == 0:
+                j = j + 1
+                file_name = str(j)+'-CT.nii'
+            else:
+                file_name = str(j)+'-PET.nii'
+            save_dir = save_root + '/' + name + '/' + fname
+            save_path = save_dir + '/' + file_name
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            print(save_path)
+            get_order_name(file_path)
+            dcm2nii(file_path, save_path)
